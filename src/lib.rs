@@ -24,14 +24,23 @@ fn do_walk(
     path_rx: Receiver<PathBuf>,
     stat_tx: Sender<Metadata>,
 ) -> Result<()> {
+    // Potential wins:
+    // - statx is slow, can we io_uring it or something?
+    // - path manipulation involves a lot of allocations
+    // - crossbeam_queue?
     loop {
         match path_rx.try_recv() {
             Ok(path) => {
-                let stat = fs::metadata(&path)?;
+                let stat = fs::symlink_metadata(&path)?;
                 if stat.is_dir() {
-                    let read = fs::read_dir(&path)?;
-                    for entry in read {
-                        path_tx.send(entry?.path())?;
+                    #[allow(clippy::single_match)]
+                    match fs::read_dir(&path) {
+                        Ok(read) => {
+                            for entry in read {
+                                path_tx.send(entry?.path())?;
+                            }
+                        }
+                        Err(_) => {} // TODO
                     }
                 }
                 stat_tx.send(stat)?;

@@ -9,3 +9,6 @@ edition = "2021"
 color-eyre = { version = "0.6.2", features = ["issue-url"] }
 eyre = "0.6.8"
 num_cpus = "1.14.0"
+
+[profile.release]
+debug = true

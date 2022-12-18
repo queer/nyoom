@@ -1,2 +1,4 @@
 /target
 /Cargo.lock
+/graph.svg
+/perf.data
