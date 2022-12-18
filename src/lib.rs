@@ -1,45 +1,40 @@
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
-use std::path::Path;
-use std::sync::mpsc::Sender;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam::deque::{Injector, Stealer, Worker};
+use crossbeam::queue::SegQueue;
 use std::iter;
 
 use eyre::Result;
 
-pub fn walk(dir: &Path) -> Result<Vec<Metadata>> {
-    let (stat_tx, stat_rx) = std::sync::mpsc::channel();
+pub fn walk(dir: &Path) -> Result<BTreeMap<PathBuf, Metadata>> {
+    let stat_queue = Arc::new(SegQueue::new());
     let path_injector = Injector::new();
 
     path_injector.push(dir.to_path_buf().as_os_str().into());
     let path_injector = Arc::new(path_injector);
     let mut workers = Vec::with_capacity(num_cpus::get());
-    for _ in 0..num_cpus::get() {
-        let stat_tx = stat_tx.clone();
+    for _ in 0..(num_cpus::get() - 1) {
         let path_injector = path_injector.clone();
+        let stat_queue = stat_queue.clone();
         let worker = std::thread::spawn(move || {
-            do_walk(Worker::new_fifo(), path_injector, &[], stat_tx).unwrap();
+            do_walk(Worker::new_fifo(), path_injector, &[], stat_queue).unwrap();
         });
         workers.push(worker);
     }
-
-    for worker in workers {
-        match worker.join() {
-            Ok(_) => {}
-            Err(err) => {
-                eprintln!("Worker thread panicked: {:?}", err);
-            }
+    let reader_handle = std::thread::spawn(move || {
+        let mut out = BTreeMap::new();
+        while let Some((path, stat)) = stat_queue.pop() {
+            out.insert(path.into(), stat);
         }
-    }
 
-    let mut out = vec![];
-    while let Ok(stat) = stat_rx.try_recv() {
-        out.push(stat);
-    }
+        out
+    });
 
-    Ok(out)
+    Ok(reader_handle.join().unwrap())
 }
 
 fn find_task<T>(
@@ -68,7 +63,7 @@ fn do_walk(
     local: Worker<OsString>,
     global: Arc<Injector<OsString>>,
     stealers: &[Stealer<OsString>],
-    stat_tx: Sender<Metadata>,
+    stat_tx: Arc<SegQueue<(OsString, Metadata)>>,
 ) -> Result<()> {
     // Potential wins:
     // - statx is slow, can we io_uring it or something?
@@ -101,7 +96,7 @@ fn do_walk(
                         }
                     }
                 }
-                stat_tx.send(stat)?;
+                stat_tx.push((path, stat));
             }
             Err(err) => {
                 panic!("stat error processing {:?}: {:?}", &path, err)

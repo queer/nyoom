@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 color-eyre = { version = "0.6.2", features = ["issue-url"] }
-crossbeam = { version = "0.8.2", features = ["crossbeam-deque"] }
+crossbeam = { version = "0.8.2", features = ["crossbeam-deque", "crossbeam-queue"] }
 eyre = "0.6.8"
 libc = "0.2.138"
 num_cpus = "1.14.0"
