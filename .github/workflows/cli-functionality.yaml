@@ -1,0 +1,40 @@
+name: "Test CLI functionality"
+on:
+  push:
+    branches:
+      - "mistress"
+    paths:
+    - "**.rs"
+    - "test/**"
+    - "there-cli/**"
+  pull_request:
+    branches:
+      - "mistress"
+    paths:
+    - "**.rs"
+    - "test/**"
+    - "there-cli/**"
+
+jobs:
+  run-tests:
+    strategy:
+      matrix:
+        version: ["stable", "nightly", "1.66"]
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v2"
+      - name: "Make sure SSH will work as expected"
+        run: |
+          ssh-keygen -t ed25519 -f ~/.ssh/whatever -N ''
+          echo -n 'from="127.0.0.1" ' | cat - ~/.ssh/whatever.pub > ~/.ssh/authorized_keys
+          chmod og-rw ~
+      - name: "Install latest stable Rust"
+        uses: "actions-rs/toolchain@v1"
+        with:
+          toolchain: "${{ matrix.version }}"
+          override: true
+      - uses: "Swatinem/rust-cache@v1"
+        with:
+          key: "cli-tests"
+      - name: "Make sure the CLI can count files"
+        run: "cargo run -- /"
