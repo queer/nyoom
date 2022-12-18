@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::fs;
 
 use crossbeam::deque::{Injector, Stealer, Worker};
 use crossbeam::thread;
@@ -10,7 +10,12 @@ use std::iter;
 
 use eyre::Result;
 
-pub fn walk<'a, F, O>(dir: &Path, walker: F) -> Result<DashMap<PathBuf, O>>
+pub struct WalkResults<O: Sized + Sync + Send> {
+    pub paths: DashMap<PathBuf, O>,
+    pub total_path_sizes: u64,
+}
+
+pub fn walk<'a, F, O>(dir: &Path, walker: F) -> Result<WalkResults<O>>
 where
     F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
     O: Sized + Send + Sync + 'a,
@@ -19,7 +24,7 @@ where
     path_injector.push(dir.to_path_buf().as_os_str().into());
     let path_injector = Arc::new(path_injector);
 
-    let out = thread::scope::<'a>(|scope| {
+    let (out, path_sizes) = thread::scope::<'a>(|scope| {
         let mut read_workers = vec![];
         let worker_count = num_cpus::get();
         let out = Arc::new(DashMap::new());
@@ -30,18 +35,19 @@ where
             let walker = walker.clone();
             // let reader_queue = reader_queue.clone();
             let read_worker = scope.spawn(move |_| {
-                do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap();
+                do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
             });
             read_workers.push(read_worker);
         }
 
         let mut completed_workers = 0;
+        let mut path_sizes = 0;
         for read_worker in read_workers {
             eprintln!(
                 "awaiting read worker: {}",
                 read_worker.thread().name().unwrap_or("<unknown>")
             );
-            read_worker.join().unwrap();
+            path_sizes += read_worker.join().unwrap();
             completed_workers += 1;
             eprintln!(
                 "completed {}/{} read workers",
@@ -49,12 +55,15 @@ where
             );
         }
 
-        out
+        (out, path_sizes)
     })
     .unwrap();
 
     match Arc::try_unwrap(out) {
-        Ok(out) => Ok(out),
+        Ok(out) => Ok(WalkResults {
+            paths: out,
+            total_path_sizes: path_sizes,
+        }),
         Err(_) => unreachable!(),
     }
 }
@@ -81,7 +90,7 @@ fn do_walk<'a, F, O>(
     stealers: &[Stealer<OsString>],
     walker: Arc<F>,
     out: Arc<DashMap<PathBuf, O>>,
-) -> Result<()>
+) -> Result<u64>
 where
     F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
     O: Sized + Send + Sync + 'a,
@@ -89,6 +98,7 @@ where
     // Potential wins:
     // - statx is slow, can we io_uring it or something?
 
+    let mut path_sizes = 0;
     loop {
         while let Some(path) = find_task(&local, &global, stealers) {
             let is_dir = is_dir(&path)?;
@@ -129,6 +139,7 @@ where
 
             let path = PathBuf::from(&path);
             let walk_res = walker(path.clone(), is_dir);
+            path_sizes += path.as_os_str().len() as u64;
             out.insert(path, walk_res);
         }
 
@@ -137,7 +148,7 @@ where
         }
     }
 
-    Ok(())
+    Ok(path_sizes)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -166,7 +177,7 @@ fn is_dir(path: &OsString) -> Result<bool> {
                 return Ok(false);
             }
             if err == nix::errno::Errno::ENOENT {
-                eprintln!("ENOENT: {:?}", path);
+                // eprintln!("ENOENT: {:?}", path);
                 return Ok(false);
             }
             panic!("lstat error processing {:?}: {:?}", &path, err)
@@ -181,7 +192,7 @@ mod tests {
     #[test]
     fn test_walk() -> Result<()> {
         let out = walk(Path::new("./a"), move |_path, _is_dir| {})?;
-        assert_eq!(69, out.len());
+        assert_eq!(69, out.paths.len());
         Ok(())
     }
 }
