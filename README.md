@@ -1,3 +1,3 @@
 # nyoom
 
-![](https://cdn.mewna.xyz/2022/12/18/5Sls34CnbIQPV.png)
+![](https://cdn.mewna.xyz/2022/12/19/ps9Ct9azdlsKc.png)
