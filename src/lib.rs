@@ -135,14 +135,17 @@ fn do_walk(
     Ok(())
 }
 
-#[cfg(not(target_os = "unix"))]
+#[cfg(not(target_os = "linux"))]
 fn is_dir(path: &OsString) -> bool {
+    // Slow path: Fall back to full stat when simple lstat isn't available.
     fs::symlink_metadata(path).map(|stat| stat.is_dir()).unwrap_or(false)
 }
 
-#[cfg(target_os = "unix")]
+// Unscientific: It SEEMS slightly faster to do a partial lstat on Linux
+#[cfg(target_os = "linux")]
 fn is_dir(path: &OsString) -> bool {
-    nix::sys::stat::lstat(path).unwrap().st_mode == libc::S_IFDIR
+    let mode = nix::sys::stat::lstat(path.as_os_str()).unwrap().st_mode;
+    mode & libc::S_IFDIR == libc::S_IFDIR
 }
 
 #[cfg(test)]
