@@ -4,6 +4,8 @@ A sorta-fast cross-platform filesystem walker
 
 MSRV 1.66
 
+[crates.io](https://crates.io/crates/nyoom)
+
 ## Example
 
 ```rust
