@@ -20,8 +20,9 @@ pub struct WalkResults<O: Sized + Sync + Send> {
     pub total_path_sizes: u64,
 }
 
-/// Walk a directory tree, calling the walker function on each path.
-/// 
+/// Walk a directory tree, calling the walker function on each path. Results
+/// **ARE NOT ORDERED.**
+///
 /// The walking process is as follows:
 /// - Take in a path to walk from
 /// - Push it into the walk queue
@@ -34,9 +35,26 @@ pub struct WalkResults<O: Sized + Sync + Send> {
 ///   - Push the result into the output map
 ///   - Track total path sizes
 /// - Join all worker threads
-/// 
+///
 /// The work-stealing queue is implemented on top of
 /// `crossbeam::deque::Injector`.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::path::Path;
+/// use nyoom::walk;
+///
+/// let results = walk(Path::new("."), |path, is_dir| {
+///    if is_dir {
+///       format!("{}:", path.display())
+///    } else {
+///       format!("{}", path.display())
+///    }
+/// }).unwrap();
+///
+/// assert!(results.paths.len() > 0);
+/// ```
 pub fn walk<'a, F, O>(dir: &Path, walker: F) -> Result<WalkResults<O>>
 where
     F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,

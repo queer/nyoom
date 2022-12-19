@@ -4,6 +4,13 @@ A sorta-fast cross-platform filesystem walker
 
 MSRV 1.66
 
+## Example
+
+```rust
+let walk_results = nyoom::walk("path/to/dir")?;
+println!("visited {} paths", walk_results.paths.len());
+```
+
 ## Benchmarks
 
 `cargo bench`
