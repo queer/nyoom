@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/queer/nyoom"
 categories = ["concurrency", "filesystem"]
-keywords = ["directory", "walk", "ignore", "walkdir", "walk_dir", "traverse", "filesystem"]
+keywords = ["directory", "walk", "ignore", "walkdir", "walk_dir"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
