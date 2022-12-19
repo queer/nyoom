@@ -161,7 +161,7 @@ where
                     }
                     Err(err) => {
                         if err.raw_os_error() == Some(libc::EACCES) {
-                            eprintln!("EACCES: {:?}", path);
+                            // eprintln!("EACCES: {:?}", path);
                             continue;
                         }
                         panic!(
@@ -210,7 +210,7 @@ fn is_dir(path: &OsString) -> Result<bool> {
         Ok(stat) => Ok(stat.st_mode & SFlag::S_IFMT.bits() == SFlag::S_IFDIR.bits()),
         Err(err) => {
             if err == nix::errno::Errno::EACCES {
-                eprintln!("EACCES: {:?}", path);
+                // eprintln!("EACCES: {:?}", path);
                 return Ok(false);
             }
             if err == nix::errno::Errno::ENOENT {

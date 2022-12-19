@@ -9,13 +9,14 @@ fn walk(path: &str) {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("walk /usr with lib: ");
-    group.warm_up_time(Duration::from_secs(120));
-    group.measurement_time(Duration::from_secs(180));
+    group.warm_up_time(Duration::from_secs(60));
+    group.measurement_time(Duration::from_secs(120));
 
     group.bench_function("nyoom", |b| b.iter(|| walk(black_box("/usr"))));
     group.bench_function("ignore", |b| {
         b.iter(|| {
             ignore::WalkBuilder::new(black_box("/usr"))
+                .threads(num_cpus::get())
                 .build_parallel()
                 .run(|| Box::new(|_| ignore::WalkState::Continue))
         })
@@ -26,6 +27,17 @@ fn criterion_benchmark(c: &mut Criterion) {
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .collect::<Vec<_>>()
+        })
+    });
+    group.bench_function("jwalk", |b| {
+        #[allow(unused_must_use)]
+        b.iter(|| {
+            for f in jwalk::WalkDir::new(black_box("/usr"))
+                .parallelism(jwalk::Parallelism::RayonNewPool(num_cpus::get()))
+                .sort(true)
+            {
+                black_box(f);
+            }
         })
     });
     group.finish();

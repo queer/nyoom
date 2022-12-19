@@ -26,6 +26,7 @@ debug = true
 [dev-dependencies]
 criterion = "0.4"
 ignore = "0.4.18"
+jwalk = "0.8.1"
 walkdir = "2.3.2"
 
 [[bench]]
