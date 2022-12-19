@@ -16,3 +16,12 @@ num_cpus = "1.14.0"
 
 [profile.release]
 debug = true
+
+[dev-dependencies]
+criterion = "0.3"
+ignore = "0.4.18"
+walkdir = "2.3.2"
+
+[[bench]]
+name = "walk_dir"
+harness = false

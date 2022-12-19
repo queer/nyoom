@@ -40,19 +40,19 @@ where
             read_workers.push(read_worker);
         }
 
-        let mut completed_workers = 0;
+        // let mut completed_workers = 0;
         let mut path_sizes = 0;
         for read_worker in read_workers {
-            eprintln!(
-                "awaiting read worker: {}",
-                read_worker.thread().name().unwrap_or("<unknown>")
-            );
+            // eprintln!(
+            //     "awaiting read worker: {}",
+            //     read_worker.thread().name().unwrap_or("<unknown>")
+            // );
             path_sizes += read_worker.join().unwrap();
-            completed_workers += 1;
-            eprintln!(
-                "completed {}/{} read workers",
-                completed_workers, worker_count
-            );
+            // completed_workers += 1;
+            // eprintln!(
+            //     "completed {}/{} read workers",
+            //     completed_workers, worker_count
+            // );
         }
 
         (out, path_sizes)
