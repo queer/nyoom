@@ -9,7 +9,7 @@ fn walk(path: &str) {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("walk /usr with lib: ");
-    group.warm_up_time(Duration::from_secs(10));
+    group.warm_up_time(Duration::from_secs(180));
     group.measurement_time(Duration::from_secs(10));
 
     group.bench_function("nyoom", |b| b.iter(|| walk(black_box("/usr"))));
