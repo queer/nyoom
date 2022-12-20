@@ -3,16 +3,16 @@ use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-fn walk(path: &str) {
-    nyoom::walk(Path::new(path), |_path, is_dir| is_dir).unwrap();
-}
-
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("walk /usr with lib: ");
     group.warm_up_time(Duration::from_secs(60));
     group.measurement_time(Duration::from_secs(120));
 
-    group.bench_function("nyoom", |b| b.iter(|| walk(black_box("/usr"))));
+    group.bench_function("nyoom", |b| b.iter(||
+        {
+            nyoom::Walker::new().walk(Path::new(black_box("/usr")), |_path, is_dir| is_dir).unwrap();
+        }
+    ));
     group.bench_function("ignore", |b| {
         b.iter(|| {
             ignore::WalkBuilder::new(black_box("/usr"))

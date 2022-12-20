@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::fs;
 
 use crossbeam::deque::{Injector, Stealer, Worker};
 use crossbeam::thread;
@@ -20,80 +20,95 @@ pub struct WalkResults<O: Sized + Sync + Send> {
     pub total_path_sizes: u64,
 }
 
-/// Walk a directory tree, calling the walker function on each path. Results
-/// **ARE NOT ORDERED.**
-///
-/// The walking process is as follows:
-/// - Take in a path to walk from
-/// - Push it into the walk queue
-/// - Spawn `numcpu` worker threads
-/// - Each worker thread:
-///   - Pops a path from the queue, attempting to steal from other worker
-///     threads when possible
-///   - If the path is a directory, push all its children into the queue
-///   - Call the walker function on the path
-///   - Push the result into the output map
-///   - Track total path sizes
-/// - Join all worker threads
-///
-/// The work-stealing queue is implemented on top of
-/// `crossbeam::deque::Injector`.
-///
-/// # Examples
-///
-/// ```rust
-/// use std::path::Path;
-/// use nyoom::walk;
-///
-/// let results = walk(Path::new("."), |path, is_dir| {
-///    if is_dir {
-///       format!("{}:", path.display())
-///    } else {
-///       format!("{}", path.display())
-///    }
-/// }).unwrap();
-///
-/// assert!(results.paths.len() > 0);
-/// ```
-pub fn walk<'a, F, O>(dir: &Path, walker: F) -> Result<WalkResults<O>>
-where
-    F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
-    O: Sized + Send + Sync + 'a,
-{
-    let path_injector = Arc::new(Injector::new());
-    path_injector.push(dir.to_path_buf().as_os_str().into());
+pub struct Walker {}
 
-    let (out, path_sizes) = thread::scope::<'a>(|scope| {
-        let mut read_workers = vec![];
-        let worker_count = num_cpus::get();
-        let out = Arc::new(DashMap::new());
-        let walker = Arc::new(walker);
-        for _ in 0..worker_count {
-            let path_injector = path_injector.clone();
-            let out = out.clone();
-            let walker = walker.clone();
-            // let reader_queue = reader_queue.clone();
-            let read_worker = scope.spawn(move |_| {
-                do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
-            });
-            read_workers.push(read_worker);
+impl Default for Walker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Walker {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    /// Walk a directory tree, calling the walker function on each path. Results
+    /// **ARE NOT ORDERED.**
+    ///
+    /// The walking process is as follows:
+    /// - Take in a path to walk from
+    /// - Push it into the walk queue
+    /// - Spawn `numcpu` worker threads
+    /// - Each worker thread:
+    ///   - Pops a path from the queue, attempting to steal from other worker
+    ///     threads when possible
+    ///   - If the path is a directory, push all its children into the queue
+    ///   - Call the walker function on the path
+    ///   - Push the result into the output map
+    ///   - Track total path sizes
+    /// - Join all worker threads
+    ///
+    /// The work-stealing queue is implemented on top of
+    /// `crossbeam::deque::Injector`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::path::Path;
+    /// use nyoom::Walker;
+    ///
+    /// let walker = Walker::new();
+    /// let results = walker.walk(Path::new("."), |path, is_dir| {
+    ///    if is_dir {
+    ///       format!("{}:", path.display())
+    ///    } else {
+    ///       format!("{}", path.display())
+    ///    }
+    /// }).unwrap();
+    ///
+    /// assert!(results.paths.len() > 0);
+    /// ```
+    pub fn walk<'a, F, O>(&self, dir: &Path, walker: F) -> Result<WalkResults<O>>
+    where
+        F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
+        O: Sized + Send + Sync + 'a,
+    {
+        let path_injector = Arc::new(Injector::new());
+        path_injector.push(dir.to_path_buf().as_os_str().into());
+
+        let (out, path_sizes) = thread::scope::<'a>(|scope| {
+            let mut read_workers = vec![];
+            let worker_count = num_cpus::get();
+            let out = Arc::new(DashMap::new());
+            let walker = Arc::new(walker);
+            for _ in 0..worker_count {
+                let path_injector = path_injector.clone();
+                let out = out.clone();
+                let walker = walker.clone();
+                // let reader_queue = reader_queue.clone();
+                let read_worker = scope.spawn(move |_| {
+                    do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
+                });
+                read_workers.push(read_worker);
+            }
+
+            let mut path_sizes = 0;
+            for read_worker in read_workers {
+                path_sizes += read_worker.join().unwrap();
+            }
+
+            (out, path_sizes)
+        })
+        .unwrap();
+
+        match Arc::try_unwrap(out) {
+            Ok(out) => Ok(WalkResults {
+                paths: out,
+                total_path_sizes: path_sizes,
+            }),
+            Err(_) => unreachable!(),
         }
-
-        let mut path_sizes = 0;
-        for read_worker in read_workers {
-            path_sizes += read_worker.join().unwrap();
-        }
-
-        (out, path_sizes)
-    })
-    .unwrap();
-
-    match Arc::try_unwrap(out) {
-        Ok(out) => Ok(WalkResults {
-            paths: out,
-            total_path_sizes: path_sizes,
-        }),
-        Err(_) => unreachable!(),
     }
 }
 
@@ -228,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_walk() -> Result<()> {
-        let out = walk(Path::new("./a"), move |_path, _is_dir| {})?;
+        let out = Walker::new().walk(Path::new("./a"), move |_path, _is_dir| {})?;
         assert_eq!(69, out.paths.len());
         Ok(())
     }
