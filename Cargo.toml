@@ -24,7 +24,7 @@ num_cpus = "1.14.0"
 debug = true
 
 [dev-dependencies]
-criterion = "0.4"
+criterion = "0.5"
 ignore = "0.4.18"
 jwalk = "0.8.1"
 walkdir = "2.3.2"
