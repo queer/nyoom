@@ -7,7 +7,7 @@ pub fn main() -> Result<()> {
     color_eyre::install()?;
     // argv[1] or "."
     let target_dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let ordered = nyoom::Walker::new().walk(Path::new(&target_dir), |_path, is_dir| is_dir)?;
+    let ordered = nyoom::Walker::default().walk(Path::new(&target_dir), |_path, is_dir| is_dir)?;
     let mut buffer =
         String::with_capacity((ordered.total_path_sizes + ordered.paths.len() as u64) as usize);
     // let mut last_was_file = false;

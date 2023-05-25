@@ -33,17 +33,19 @@ impl<O: Sized + Send + Sync + Copy> WalkResults<O> {
     }
 }
 
-pub struct Walker {}
+pub struct Walker {
+    num_threads: usize,
+}
 
 impl Default for Walker {
     fn default() -> Self {
-        Self::new()
+        Self::new(num_cpus::get())
     }
 }
 
 impl Walker {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(num_threads: usize) -> Self {
+        Self { num_threads }
     }
 
     /// Walk a directory tree, calling the walker function on each path. Results
@@ -71,7 +73,7 @@ impl Walker {
     /// use std::path::Path;
     /// use nyoom::Walker;
     ///
-    /// let walker = Walker::new();
+    /// let walker = Walker::default();
     /// let results = walker.walk(Path::new("."), |path, is_dir| {
     ///    if is_dir {
     ///       format!("{}:", path.display());
@@ -93,7 +95,7 @@ impl Walker {
 
         let (out, path_sizes) = thread::scope::<'a>(|scope| {
             let mut read_workers = vec![];
-            let worker_count = num_cpus::get();
+            let worker_count = self.num_threads;
             let out = Arc::new(DashMap::new());
             let walker = Arc::new(walker);
             for _ in 0..worker_count {
@@ -257,14 +259,14 @@ mod tests {
 
     #[test]
     fn test_walk() -> Result<()> {
-        let out = Walker::new().walk(Path::new("./a"), move |_path, _is_dir| {})?;
+        let out = Walker::default().walk(Path::new("./a"), move |_path, _is_dir| {})?;
         assert_eq!(69, out.paths.len());
         Ok(())
     }
 
     #[test]
     fn test_walk_ordered() -> Result<()> {
-        let out = Walker::new().walk(Path::new("./a"), move |_path, _is_dir| {})?;
+        let out = Walker::default().walk(Path::new("./a"), move |_path, _is_dir| {})?;
         assert_eq!(69, out.paths_ordered().len());
         Ok(())
     }
