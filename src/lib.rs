@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,11 +14,23 @@ use eyre::Result;
 /// The results of traversing a directory tree. Contains a map of paths to the
 /// result of the walker function, and the total size of all paths. The latter
 /// is useful for preallocating a buffer for the output.
-pub struct WalkResults<O: Sized + Sync + Send> {
+pub struct WalkResults<O: Sized + Sync + Send + Copy> {
     /// All paths visited during directory tree-walking.
     pub paths: DashMap<PathBuf, O>,
     /// The total size of all paths visited during directory tree-walking.
     pub total_path_sizes: u64,
+}
+
+impl<O: Sized + Send + Sync + Copy> WalkResults<O> {
+    pub fn paths_ordered(&self) -> BTreeMap<PathBuf, O> {
+        let mut out = BTreeMap::new();
+
+        for part in self.paths.iter() {
+            out.insert(part.key().clone(), *part.value());
+        }
+
+        out
+    }
 }
 
 pub struct Walker {}
@@ -61,10 +74,11 @@ impl Walker {
     /// let walker = Walker::new();
     /// let results = walker.walk(Path::new("."), |path, is_dir| {
     ///    if is_dir {
-    ///       format!("{}:", path.display())
+    ///       format!("{}:", path.display());
     ///    } else {
-    ///       format!("{}", path.display())
+    ///       format!("{}", path.display());
     ///    }
+    ///    is_dir
     /// }).unwrap();
     ///
     /// assert!(results.paths.len() > 0);
@@ -72,7 +86,7 @@ impl Walker {
     pub fn walk<'a, F, O>(&self, dir: &Path, walker: F) -> Result<WalkResults<O>>
     where
         F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
-        O: Sized + Send + Sync + 'a,
+        O: Sized + Send + Sync + Copy + 'a,
     {
         let path_injector = Arc::new(Injector::new());
         path_injector.push(dir.to_path_buf().as_os_str().into());
@@ -245,6 +259,13 @@ mod tests {
     fn test_walk() -> Result<()> {
         let out = Walker::new().walk(Path::new("./a"), move |_path, _is_dir| {})?;
         assert_eq!(69, out.paths.len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_walk_ordered() -> Result<()> {
+        let out = Walker::new().walk(Path::new("./a"), move |_path, _is_dir| {})?;
+        assert_eq!(69, out.paths_ordered().len());
         Ok(())
     }
 }
