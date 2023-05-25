@@ -8,11 +8,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(60));
     group.measurement_time(Duration::from_secs(120));
 
-    group.bench_function("nyoom", |b| b.iter(||
-        {
-            nyoom::Walker::new().walk(Path::new(black_box("/usr")), |_path, is_dir| is_dir).unwrap();
-        }
-    ));
+    group.bench_function("nyoom", |b| {
+        b.iter(|| {
+            nyoom::Walker::new()
+                .walk(Path::new(black_box("/usr")), |_path, is_dir| is_dir)
+                .unwrap();
+        })
+    });
     group.bench_function("ignore", |b| {
         b.iter(|| {
             ignore::WalkBuilder::new(black_box("/usr"))
