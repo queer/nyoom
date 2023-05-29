@@ -10,7 +10,7 @@ pub async fn main() -> Result<()> {
     let target_dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let ordered = nyoom::Walker::default()
         .walk(
-            TokioFloppyDisk::new(),
+            &TokioFloppyDisk::new(),
             Path::new(&target_dir),
             |_path, is_dir| is_dir,
         )

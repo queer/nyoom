@@ -78,7 +78,7 @@ impl<'a> Walker {
     /// # #[tokio::main]
     /// # async fn main() {
     /// let walker = Walker::default();
-    /// let results = walker.walk(TokioFloppyDisk::new(), Path::new("."), |path, is_dir| {
+    /// let results = walker.walk(&TokioFloppyDisk::new(), Path::new("."), |path, is_dir| {
     ///    if is_dir {
     ///       format!("{}:", path.display());
     ///    } else {
@@ -92,7 +92,7 @@ impl<'a> Walker {
     /// ```
     pub async fn walk<F: FloppyDisk<'a> + Send + Sync + 'static, W, O>(
         &self,
-        disk: F,
+        disk: &'a F,
         dir: &Path,
         walker: W,
     ) -> Result<WalkResults<O>>
@@ -102,7 +102,6 @@ impl<'a> Walker {
     {
         let worker_count = self.num_threads;
         let dir = dir.to_path_buf();
-        let disk = Arc::new(disk);
 
         let path_injector = Arc::new(Injector::new());
         path_injector.push((disk, dir.as_os_str().into()));
@@ -159,9 +158,9 @@ fn find_task<T>(
 }
 
 fn do_walk<'a, F, W, O>(
-    local: Worker<(Arc<F>, OsString)>,
-    global: Arc<Injector<(Arc<F>, OsString)>>,
-    stealers: &[Stealer<(Arc<F>, OsString)>],
+    local: Worker<(&'a F, OsString)>,
+    global: Arc<Injector<(&'a F, OsString)>>,
+    stealers: &[Stealer<(&'a F, OsString)>],
     walker: Arc<W>,
     out: Arc<DashMap<PathBuf, O>>,
 ) -> Result<u64>
@@ -196,7 +195,7 @@ where
                                         ]))
                                     });
                                     next.push(file_name);
-                                    global.push((disk.clone(), next.clone()));
+                                    global.push((disk, next.clone()));
                                 }
                                 Ok(None) => break,
                                 Err(err) => {
@@ -301,7 +300,7 @@ mod tests {
     async fn test_walk() -> Result<()> {
         let out = Walker::default()
             .walk(
-                TokioFloppyDisk::new(),
+                &TokioFloppyDisk::new(),
                 Path::new("./a"),
                 move |_path, _is_dir| {},
             )
@@ -314,7 +313,7 @@ mod tests {
     async fn test_walk_ordered() -> Result<()> {
         let out = Walker::default()
             .walk(
-                TokioFloppyDisk::new(),
+                &TokioFloppyDisk::new(),
                 Path::new("./a"),
                 move |_path, _is_dir| {},
             )
