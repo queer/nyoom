@@ -43,7 +43,7 @@ impl Default for Walker {
     }
 }
 
-impl Walker {
+impl<'a> Walker {
     pub fn new(num_threads: usize) -> Self {
         Self { num_threads }
     }
@@ -73,6 +73,8 @@ impl Walker {
     /// use std::path::Path;
     /// use nyoom::Walker;
     ///
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// let walker = Walker::default();
     /// let results = walker.walk(Path::new("."), |path, is_dir| {
     ///    if is_dir {
@@ -81,50 +83,56 @@ impl Walker {
     ///       format!("{}", path.display());
     ///    }
     ///    is_dir
-    /// }).unwrap();
+    /// }).await.unwrap();
     ///
     /// assert!(results.paths.len() > 0);
+    /// # }
     /// ```
-    pub fn walk<'a, F, O>(&self, dir: &Path, walker: F) -> Result<WalkResults<O>>
+    pub async fn walk<F, O>(&self, dir: &Path, walker: F) -> Result<WalkResults<O>>
     where
-        F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
-        O: Sized + Send + Sync + Copy + 'a,
+        F: Fn(PathBuf, bool) -> O + Send + Sync + 'static,
+        O: Sized + Send + Sync + Copy + 'static,
     {
-        let path_injector = Arc::new(Injector::new());
-        path_injector.push(dir.to_path_buf().as_os_str().into());
+        let worker_count = self.num_threads;
+        let dir = dir.to_path_buf();
 
-        let (out, path_sizes) = thread::scope::<'a>(|scope| {
-            let mut read_workers = vec![];
-            let worker_count = self.num_threads;
-            let out = Arc::new(DashMap::new());
-            let walker = Arc::new(walker);
-            for _ in 0..worker_count {
-                let path_injector = path_injector.clone();
-                let out = out.clone();
-                let walker = walker.clone();
-                // let reader_queue = reader_queue.clone();
-                let read_worker = scope.spawn(move |_| {
-                    do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
-                });
-                read_workers.push(read_worker);
+        tokio::task::spawn_blocking(move || {
+            let path_injector = Arc::new(Injector::new());
+            path_injector.push(dir.as_os_str().into());
+
+            let (out, path_sizes) = thread::scope::<'a>(|scope| {
+                let mut read_workers = vec![];
+                let out = Arc::new(DashMap::new());
+                let walker = Arc::new(walker);
+                for _ in 0..worker_count {
+                    let path_injector = path_injector.clone();
+                    let out = out.clone();
+                    let walker = walker.clone();
+                    // let reader_queue = reader_queue.clone();
+                    let read_worker = scope.spawn(move |_| {
+                        do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
+                    });
+                    read_workers.push(read_worker);
+                }
+
+                let mut path_sizes = 0;
+                for read_worker in read_workers {
+                    path_sizes += read_worker.join().unwrap();
+                }
+
+                (out, path_sizes)
+            })
+            .unwrap();
+
+            match Arc::try_unwrap(out) {
+                Ok(out) => Ok(WalkResults {
+                    paths: out,
+                    total_path_sizes: path_sizes,
+                }),
+                Err(_) => unreachable!(),
             }
-
-            let mut path_sizes = 0;
-            for read_worker in read_workers {
-                path_sizes += read_worker.join().unwrap();
-            }
-
-            (out, path_sizes)
         })
-        .unwrap();
-
-        match Arc::try_unwrap(out) {
-            Ok(out) => Ok(WalkResults {
-                paths: out,
-                total_path_sizes: path_sizes,
-            }),
-            Err(_) => unreachable!(),
-        }
+        .await?
     }
 }
 
@@ -253,20 +261,42 @@ fn is_dir(path: &OsString) -> Result<bool> {
     }
 }
 
+// fn run_here<F: Future>(fut: F) -> F::Output {
+//     // TODO: This is evil
+//     // Adapted from https://stackoverflow.com/questions/66035290
+//     let handle = tokio::runtime::Handle::try_current().unwrap();
+//     let _guard = handle.enter();
+//     futures::executor::block_on(fut)
+// }
+
+// #[allow(unused)]
+// fn run_here_outside_of_tokio_context<F: Future>(fut: F) -> F::Output {
+//     // TODO: This is slightly less-evil than the previous one but still pretty bad
+//     let rt = tokio::runtime::Builder::new_current_thread()
+//         .build()
+//         .unwrap();
+
+//     rt.block_on(fut)
+// }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_walk() -> Result<()> {
-        let out = Walker::default().walk(Path::new("./a"), move |_path, _is_dir| {})?;
+    #[tokio::test]
+    async fn test_walk() -> Result<()> {
+        let out = Walker::default()
+            .walk(Path::new("./a"), move |_path, _is_dir| {})
+            .await?;
         assert_eq!(69, out.paths.len());
         Ok(())
     }
 
-    #[test]
-    fn test_walk_ordered() -> Result<()> {
-        let out = Walker::default().walk(Path::new("./a"), move |_path, _is_dir| {})?;
+    #[tokio::test]
+    async fn test_walk_ordered() -> Result<()> {
+        let out = Walker::default()
+            .walk(Path::new("./a"), move |_path, _is_dir| {})
+            .await?;
         assert_eq!(69, out.paths_ordered().len());
         Ok(())
     }
