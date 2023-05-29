@@ -4,7 +4,7 @@ use dashmap::DashSet;
 use floppy_disk::prelude::*;
 
 pub async fn walk<'a, F: FloppyDisk<'a>, P: Into<PathBuf>>(
-    disk: F,
+    disk: &'a F,
     path: P,
 ) -> std::io::Result<DashSet<PathBuf>> {
     let path = path.into();
