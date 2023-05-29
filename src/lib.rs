@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam::deque::{Injector, Stealer, Worker};
 use crossbeam::thread;
 use dashmap::DashMap;
+use floppy_disk::{FloppyDirEntry, FloppyDisk, FloppyReadDir};
+use futures::Future;
 use std::iter;
 
 use eyre::Result;
@@ -71,12 +72,13 @@ impl<'a> Walker {
     ///
     /// ```rust
     /// use std::path::Path;
+    /// use floppy_disk::prelude::TokioFloppyDisk;
     /// use nyoom::Walker;
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// let walker = Walker::default();
-    /// let results = walker.walk(Path::new("."), |path, is_dir| {
+    /// let results = walker.walk(TokioFloppyDisk::new(), Path::new("."), |path, is_dir| {
     ///    if is_dir {
     ///       format!("{}:", path.display());
     ///    } else {
@@ -88,51 +90,54 @@ impl<'a> Walker {
     /// assert!(results.paths.len() > 0);
     /// # }
     /// ```
-    pub async fn walk<F, O>(&self, dir: &Path, walker: F) -> Result<WalkResults<O>>
+    pub async fn walk<F: FloppyDisk<'a> + Send + Sync + 'static, W, O>(
+        &self,
+        disk: F,
+        dir: &Path,
+        walker: W,
+    ) -> Result<WalkResults<O>>
     where
-        F: Fn(PathBuf, bool) -> O + Send + Sync + 'static,
+        W: Fn(PathBuf, bool) -> O + Send + Sync + 'static,
         O: Sized + Send + Sync + Copy + 'static,
     {
         let worker_count = self.num_threads;
         let dir = dir.to_path_buf();
+        let disk = Arc::new(disk);
 
-        tokio::task::spawn_blocking(move || {
-            let path_injector = Arc::new(Injector::new());
-            path_injector.push(dir.as_os_str().into());
+        let path_injector = Arc::new(Injector::new());
+        path_injector.push((disk, dir.as_os_str().into()));
 
-            let (out, path_sizes) = thread::scope::<'a>(|scope| {
-                let mut read_workers = vec![];
-                let out = Arc::new(DashMap::new());
-                let walker = Arc::new(walker);
-                for _ in 0..worker_count {
-                    let path_injector = path_injector.clone();
-                    let out = out.clone();
-                    let walker = walker.clone();
-                    // let reader_queue = reader_queue.clone();
-                    let read_worker = scope.spawn(move |_| {
-                        do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
-                    });
-                    read_workers.push(read_worker);
-                }
-
-                let mut path_sizes = 0;
-                for read_worker in read_workers {
-                    path_sizes += read_worker.join().unwrap();
-                }
-
-                (out, path_sizes)
-            })
-            .unwrap();
-
-            match Arc::try_unwrap(out) {
-                Ok(out) => Ok(WalkResults {
-                    paths: out,
-                    total_path_sizes: path_sizes,
-                }),
-                Err(_) => unreachable!(),
+        let (out, path_sizes) = thread::scope::<'a>(|scope| {
+            let mut read_workers = vec![];
+            let out = Arc::new(DashMap::new());
+            let walker = Arc::new(walker);
+            for _ in 0..worker_count {
+                let path_injector = path_injector.clone();
+                let out = out.clone();
+                let walker = walker.clone();
+                // let reader_queue = reader_queue.clone();
+                let read_worker = scope.spawn(move |_| {
+                    do_walk(Worker::new_fifo(), path_injector, &[], walker, out).unwrap()
+                });
+                read_workers.push(read_worker);
             }
+
+            let mut path_sizes = 0;
+            for read_worker in read_workers {
+                path_sizes += read_worker.join().unwrap();
+            }
+
+            (out, path_sizes)
         })
-        .await?
+        .unwrap();
+
+        match Arc::try_unwrap(out) {
+            Ok(out) => Ok(WalkResults {
+                paths: out,
+                total_path_sizes: path_sizes,
+            }),
+            Err(_) => unreachable!(),
+        }
     }
 }
 
@@ -153,32 +158,34 @@ fn find_task<T>(
     })
 }
 
-fn do_walk<'a, F, O>(
-    local: Worker<OsString>,
-    global: Arc<Injector<OsString>>,
-    stealers: &[Stealer<OsString>],
-    walker: Arc<F>,
+fn do_walk<'a, F, W, O>(
+    local: Worker<(Arc<F>, OsString)>,
+    global: Arc<Injector<(Arc<F>, OsString)>>,
+    stealers: &[Stealer<(Arc<F>, OsString)>],
+    walker: Arc<W>,
     out: Arc<DashMap<PathBuf, O>>,
 ) -> Result<u64>
 where
-    F: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
+    F: FloppyDisk<'a> + Send + Sync + 'static,
+    W: Fn(PathBuf, bool) -> O + Send + Sync + 'a,
     O: Sized + Send + Sync + 'a,
 {
     let mut path_sizes = 0;
     loop {
         // If a task is available, process it.
-        while let Some(path) = find_task(&local, &global, stealers) {
+        while let Some((disk, path)) = find_task(&local, &global, stealers) {
             // If the currently-processed path is a directory, it needs special
             // processing. On Linux this is just an lstat call.
             let is_dir = is_dir(&path)?;
 
             // If the path is a directory, push all its children into the queue.
             if is_dir {
-                match fs::read_dir(&path) {
-                    Ok(read) => {
-                        for entry in read {
+                match run_here(disk.read_dir(&path)) {
+                    Ok(mut read) => {
+                        loop {
+                            let entry = run_here(read.next_entry());
                             match entry {
-                                Ok(entry) => {
+                                Ok(Some(entry)) => {
                                     let file_name = entry.file_name();
                                     let mut next = path.clone();
                                     // Safety: we know that the path separator
@@ -189,8 +196,9 @@ where
                                         ]))
                                     });
                                     next.push(file_name);
-                                    global.push(next.clone());
+                                    global.push((disk.clone(), next.clone()));
                                 }
+                                Ok(None) => break,
                                 Err(err) => {
                                     eprintln!("read_dir error @ {:?}: {:?}", &path, err,);
                                     break;
@@ -261,32 +269,42 @@ fn is_dir(path: &OsString) -> Result<bool> {
     }
 }
 
-// fn run_here<F: Future>(fut: F) -> F::Output {
-//     // TODO: This is evil
-//     // Adapted from https://stackoverflow.com/questions/66035290
-//     let handle = tokio::runtime::Handle::try_current().unwrap();
-//     let _guard = handle.enter();
-//     futures::executor::block_on(fut)
-// }
+fn run_here<F: Future>(fut: F) -> F::Output {
+    // TODO: This is evil
+    // Adapted from https://stackoverflow.com/questions/66035290
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let _guard = handle.enter();
+            futures::executor::block_on(fut)
+        }
+        Err(_) => run_here_outside_of_tokio_context(fut),
+    }
+}
 
-// #[allow(unused)]
-// fn run_here_outside_of_tokio_context<F: Future>(fut: F) -> F::Output {
-//     // TODO: This is slightly less-evil than the previous one but still pretty bad
-//     let rt = tokio::runtime::Builder::new_current_thread()
-//         .build()
-//         .unwrap();
+#[allow(unused)]
+fn run_here_outside_of_tokio_context<F: Future>(fut: F) -> F::Output {
+    // TODO: This is slightly less-evil than the previous one but still pretty bad
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
 
-//     rt.block_on(fut)
-// }
+    rt.block_on(fut)
+}
 
 #[cfg(test)]
 mod tests {
+    use floppy_disk::tokio_fs::TokioFloppyDisk;
+
     use super::*;
 
     #[tokio::test]
     async fn test_walk() -> Result<()> {
         let out = Walker::default()
-            .walk(Path::new("./a"), move |_path, _is_dir| {})
+            .walk(
+                TokioFloppyDisk::new(),
+                Path::new("./a"),
+                move |_path, _is_dir| {},
+            )
             .await?;
         assert_eq!(69, out.paths.len());
         Ok(())
@@ -295,7 +313,11 @@ mod tests {
     #[tokio::test]
     async fn test_walk_ordered() -> Result<()> {
         let out = Walker::default()
-            .walk(Path::new("./a"), move |_path, _is_dir| {})
+            .walk(
+                TokioFloppyDisk::new(),
+                Path::new("./a"),
+                move |_path, _is_dir| {},
+            )
             .await?;
         assert_eq!(69, out.paths_ordered().len());
         Ok(())
