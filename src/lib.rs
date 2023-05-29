@@ -1,7 +1,15 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use dashmap::DashSet;
 use floppy_disk::prelude::*;
+
+pub async fn walk_ordered<'a, F: FloppyDisk<'a>, P: Into<PathBuf>>(
+    disk: &'a F,
+    path: P,
+) -> std::io::Result<BTreeSet<PathBuf>> {
+    walk(disk, path).await.map(|set| set.into_iter().collect())
+}
 
 pub async fn walk<'a, F: FloppyDisk<'a>, P: Into<PathBuf>>(
     disk: &'a F,
