@@ -7,7 +7,7 @@ use floppy_disk::tokio_fs::TokioFloppyDisk;
 pub async fn main() -> Result<()> {
     color_eyre::install()?;
     let target_dir = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let results = nyoom::walk(&TokioFloppyDisk::new(), target_dir).await?;
+    let results = nyoom::walk(&TokioFloppyDisk::new(None), target_dir).await?;
 
     let mut buffer = String::new();
     let out_start = Instant::now();
