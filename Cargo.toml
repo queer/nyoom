@@ -1,7 +1,7 @@
 [package]
 name = "nyoom"
 description = "A filesystem walker for floppy-disk."
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -15,7 +15,7 @@ keywords = ["directory", "walk", "ignore", "walkdir", "walk_dir"]
 color-eyre = { version = "0.6.2", features = ["issue-url"] }
 dashmap = "5.4.0"
 eyre = "0.6.8"
-floppy-disk = "0.2.0"
+floppy-disk = "0.2.2"
 futures = "0.3.28"
 tokio = { version = "1.28.2", features = ["sync", "rt", "macros", "rt-multi-thread", "test-util"] }
 
